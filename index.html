@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gmail Meteor Cleaner (Triage Mode) - Retro Arcade Inbox Defender</title>
+  <meta name="description" content="Turn inbox cleanup into a fast-paced 30-minute retro arcade space shooter. Defeat clutter meteors and safely clean your Gmail mailbox.">
+
+  <!-- Google Fonts: Press Start 2P & VT323 -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
+
+  <!-- Phaser 3 via CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/phaser/3.80.1/phaser.min.js"></script>
+
+  <!-- Google Identity Services (GIS) OAuth Client via CDN -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+
+  <!-- Arcade Styling -->
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- Retro Arcade Frame Viewport -->
+  <main class="arcade-viewport">
+    <!-- CRT Scanlines Effect -->
+    <div class="scanlines"></div>
+
+    <!-- Phaser 3 Canvas Container -->
+    <div id="phaser-game-container"></div>
+
+    <!-- In-Game HUD Overlay -->
+    <header id="game-hud" class="hidden">
+      <div class="hud-top-row">
+        <div class="hud-left">
+          <div id="hud-hearts" class="hearts-container">❤️❤️❤️</div>
+          <div class="score-display">SCORE: <span id="hud-score">0</span></div>
+          <div id="hud-combo" class="combo-badge">x1</div>
+          <div id="hud-gun" class="gun-badge">Lv.1</div>
+        </div>
+        <div class="hud-right">
+          <div id="hud-counter" class="counter-display">TRASHED: 0 | QUEUED: 0</div>
+          <div id="hud-dryrun" class="dryrun-badge">DRY RUN</div>
+          <button id="hud-undo-btn" class="hud-btn">UNDO (Ctrl+Z)</button>
+        </div>
+      </div>
+
+      <div class="hud-pace-bar">
+        <div id="hud-pace" class="pace-text">0 / 5,000 emails - Starting scan...</div>
+        <div class="checkpoint-track">
+          <div id="hud-checkpoint-fill"></div>
+        </div>
+        <div id="hud-powerup-bar" class="hidden"></div>
+      </div>
+    </header>
+
+    <!-- Bottom Inspector Panel (PRD Section 7) -->
+    <section id="inspector-panel">
+      <div class="insp-col"><span class="insp-tag">[STANDBY]</span> Aim at any falling meteor to inspect sender &amp; subject details</div>
+      <div class="insp-subject">Hold left click or Space to fire laser beam.</div>
+    </section>
+
+    <!-- Yellow Meteor Freeze Card (PRD Section 7) -->
+    <aside id="freeze-card" class="hidden"></aside>
+
+    <!-- Round 2 Star Rescue Banner -->
+    <div id="round2-banner" class="hidden">
+      <span>ROUND 2: STAR RESCUE (GOLD DRIFT)</span>
+      <span id="rescue-counter">STARRED: 0</span>
+      <button id="rescue-skip-btn" class="hud-btn">FINISH TO STATS ↗</button>
+    </div>
+
+    <!-- Transient Toast Notification -->
+    <div id="game-toast" class="hidden"></div>
+
+    <!-- Pre-game Triage & Keep Review Overlay -->
+    <section id="pregame-overlay" class="full-overlay hidden"></section>
+
+    <!-- Checkpoint Upgrade Modal -->
+    <div id="checkpoint-modal" class="full-overlay hidden"></div>
+
+    <!-- Boss Unsubscribe Missile Modal -->
+    <div id="missile-modal" class="full-overlay hidden"></div>
+
+    <!-- Final Stats & Mission Debriefing Modal -->
+    <section id="stats-overlay" class="full-overlay hidden"></section>
+
+    <!-- Google OAuth Setup Modal -->
+    <div id="oauth-modal" class="full-overlay hidden">
+      <div class="modal-card">
+        <h2 class="modal-title">CONNECT GMAIL VIA OAUTH</h2>
+        <p class="modal-desc">
+          Enter your Google Cloud OAuth 2.0 Web Client ID.<br><br>
+          <span style="color:#facc15">⚠️ Important:</span> Google blocks OAuth on <code>file:///</code> addresses (Error 400). Run via <strong><code>start-server.bat</code></strong> and open <strong><code>http://localhost:8000</code></strong>.<br><br>
+          <strong>Security Guarantee:</strong> All tokens stay strictly in-memory in your browser. Nothing is sent to third parties or saved to disk.
+        </p>
+        <label for="oauth-client-id" style="font-size: 8px; color: #94a3b8; display: block; margin-bottom: 6px;">GOOGLE CLIENT ID:</label>
+        <input type="text" id="oauth-client-id" class="modal-input" placeholder="123456789-abc.apps.googleusercontent.com">
+        <div class="modal-actions">
+          <button id="oauth-cancel-btn" class="retro-btn secondary">CANCEL</button>
+          <button id="oauth-save-btn" class="retro-btn primary">CONNECT &amp; SCAN</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Safety & Rules Modal -->
+    <div id="safety-modal" class="full-overlay hidden">
+      <div class="modal-card">
+        <h2 class="modal-title">SAFETY RULES &amp; CONTROLS</h2>
+        <div class="modal-desc">
+          <p><strong>1. ZERO PERMANENT DELETION:</strong> Trashed emails simply move to your Gmail Trash. You have 30 days to recover anything.</p><br>
+          <p><strong>2. METEOR COLORS:</strong><br>
+          • <span style="color:#ef4444">RED</span>: Promotions, Social, Spam (Safe to trash)<br>
+          • <span style="color:#eab308">YELLOW</span>: Updates, Forums (Freeze with laser to confirm)<br>
+          • <span style="color:#22c55e">GREEN</span>: Important &amp; Starred (DO NOT SHOOT! Costs 1 life)<br>
+          </p><br>
+          <p><strong>3. CONTROLS:</strong><br>
+          • Mouse: Aim ship &amp; laser<br>
+          • Hold Left Click / Space: Fire laser<br>
+          • K or Right-Click: Add sender to Keep list<br>
+          • Esc: Let go of frozen yellow meteor<br>
+          • Ctrl+Z: Undo last trash action
+          </p>
+        </div>
+        <div class="modal-actions">
+          <button id="safety-close-btn" class="retro-btn primary">GOT IT!</button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Game Scripts Loaded in Sequence for 100% Universal Compatibility (file:// and http://) -->
+  <script src="js/config.js"></script>
+  <script src="js/sprites.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/mock-data.js"></script>
+  <script src="js/classifier.js"></script>
+  <script src="js/clusterer.js"></script>
+  <script src="js/trash-queue.js"></script>
+  <script src="js/gmail-client.js"></script>
+  <script src="js/scenes/MenuScene.js"></script>
+  <script src="js/scenes/PreGameScene.js"></script>
+  <script src="js/scenes/GameScene.js"></script>
+  <script src="js/scenes/RescueScene.js"></script>
+  <script src="js/scenes/StatsScene.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

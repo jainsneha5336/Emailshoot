@@ -1,0 +1,30 @@
+# Project-internal files — not for public release
+PRD).md
+preview.html
+tests/
+
+# OS & editor junk
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
+
+# Node (if ever used locally)
+node_modules/
+npm-debug.log*
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# VS Code
+.vscode/
+
+# Logs
+*.log
+
+# Antigravity / IDE scratch
+.agents/
+.gemini/
