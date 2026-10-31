@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Gmail Meteor Cleaner - Unit Tests</title>
+  <style>
+    body {
+      background: #090d16;
+      color: #f8fafc;
+      font-family: monospace;
+      padding: 24px;
+      line-height: 1.6;
+    }
+    h1 { color: #38bdf8; font-size: 20px; margin-bottom: 16px; }
+    .test-pass { color: #22c55e; margin: 4px 0; }
+    .test-fail { color: #ef4444; font-weight: bold; margin: 4px 0; }
+    .test-box { background: #0f172a; border: 1px solid #1e293b; padding: 12px; margin-top: 16px; border-radius: 4px; }
+    .stat-row { color: #94a3b8; margin: 3px 0; }
+  </style>
+
+  <!-- Load dependencies in sequence -->
+  <script src="../js/config.js"></script>
+  <script src="../js/classifier.js"></script>
+  <script src="../js/clusterer.js"></script>
+  <script src="../js/mock-data.js"></script>
+  <script src="../js/trash-queue.js"></script>
+</head>
+<body>
+  <h1>Gmail Meteor Cleaner - Logic Verification Suite</h1>
+  <div id="results">Running tests...</div>
+
+  <script>
+    (async function runTests() {
+      const results = [];
+
+      function assert(condition, message) {
+        if (condition) {
+          results.push(`<div class="test-pass">✔ PASS: ${message}</div>`);
+        } else {
+          results.push(`<div class="test-fail">✘ FAIL: ${message}</div>`);
+        }
+      }
+
+      // --- TEST 1: Email Classification (PRD Section 8) ---
+      const classifier = new window.EmailClassifier();
+
+      // 1.1 Important wins over Promotions
+      const email1 = { id: '1', labelIds: ['CATEGORY_PROMOTIONS', 'IMPORTANT'], sender: 'promo@store.com' };
+      const res1 = classifier.classify(email1);
+      assert(res1 && res1.color === 'green', 'Important label wins over Promotions (Must be Green)');
+
+      // 1.2 Starred wins over Spam
+      const email2 = { id: '2', labelIds: ['SPAM', 'STARRED'], sender: 'spam@bad.com' };
+      const res2 = classifier.classify(email2);
+      assert(res2 && res2.color === 'green', 'Starred label wins over Spam (Must be Green)');
+
+      // 1.3 Promotions is Red
+      const email3 = { id: '3', labelIds: ['CATEGORY_PROMOTIONS'], sender: 'news@deals.com' };
+      const res3 = classifier.classify(email3);
+      assert(res3 && res3.color === 'red', 'Promotions is Red');
+
+      // 1.4 Social is Red
+      const email4 = { id: '4', labelIds: ['CATEGORY_SOCIAL'], sender: 'alert@social.com' };
+      const res4 = classifier.classify(email4);
+      assert(res4 && res4.color === 'red', 'Social is Red');
+
+      // 1.5 Updates is Yellow
+      const email5 = { id: '5', labelIds: ['CATEGORY_UPDATES'], sender: 'ci@builds.com' };
+      const res5 = classifier.classify(email5);
+      assert(res5 && res5.color === 'yellow', 'Updates is Yellow');
+
+      // 1.6 Forums is Yellow
+      const email6 = { id: '6', labelIds: ['CATEGORY_FORUMS'], sender: 'digest@forum.org' };
+      const res6 = classifier.classify(email6);
+      assert(res6 && res6.color === 'yellow', 'Forums is Yellow');
+
+      // 1.7 Primary unlabeled mail is excluded (null)
+      const email7 = { id: '7', labelIds: ['INBOX'], sender: 'friend@personal.com' };
+      const res7 = classifier.classify(email7);
+      assert(res7 === null, 'Unlabeled / Primary mail is excluded from game (null)');
+
+      // 1.8 Keep list sender always turns Green
+      classifier.addToKeepList('news@deals.com');
+      const res8 = classifier.classify(email3);
+      assert(res8 && res8.color === 'green', 'Sender on Keep List turns Green');
+
+      // --- TEST 2: Demo Inbox Generation (5,000 emails) ---
+      const inbox = window.generateDemoInbox(5000);
+      assert(inbox.length === 5000, `Generated exact requested inbox size of 5000 emails (got ${inbox.length})`);
+      assert(inbox[0].timestamp >= inbox[inbox.length - 1].timestamp, 'Inbox emails are sorted newest first');
+
+      // --- TEST 3: Clustering & Boss Detection ---
+      const classifiedDemo = inbox.map(email => ({
+        email,
+        classification: classifier.classify(email),
+      })).filter(item => item.classification !== null);
+
+      const clustered = window.EmailClusterer.cluster(classifiedDemo);
+      assert(clustered.meteors.length > 0, `Successfully clustered into ${clustered.meteors.length} game meteors`);
+      assert(clustered.bossSenders.length > 0, `Detected ${clustered.bossSenders.length} boss senders with >= 200 emails`);
+
+      const maxCluster = Math.max(...clustered.meteors.filter(m => m.type !== 'boss').map(m => m.count));
+      assert(maxCluster <= window.CONFIG.CLUSTERING.MAX_CLUSTER_SIZE, `Clusters are capped at max ${window.CONFIG.CLUSTERING.MAX_CLUSTER_SIZE} emails (max was ${maxCluster})`);
+
+      const yellowMax = Math.max(...clustered.meteors.filter(m => m.color === 'yellow').map(m => m.count));
+      const greenMax = Math.max(...clustered.meteors.filter(m => m.color === 'green').map(m => m.count));
+      assert(yellowMax === 1 && greenMax === 1, 'Yellow and Green emails are NEVER clustered (count === 1)');
+
+      // --- TEST 4: Trash Queue & Undo Engine ---
+      let flushedCount = 0;
+      let restoredCount = 0;
+      const testQueue = new window.TrashQueue({
+        onFlush: async (ids) => { flushedCount += ids.length; },
+        onUndo: async (ids) => { restoredCount += ids.length; },
+      });
+
+      testQueue.enqueue([{ id: 'm1' }, { id: 'm2' }], 20);
+      assert(testQueue.getCounts().queued === 2, 'Enqueued 2 items to pending queue');
+
+      const undoRes = await testQueue.undoLatest();
+      assert(undoRes.restoredCount === 2, 'Undo removed 2 un-flushed items with 0 API calls');
+      assert(testQueue.getCounts().queued === 0, 'Pending queue returned to 0');
+
+      testQueue.stop();
+
+      // Render results
+      document.getElementById('results').innerHTML = results.join('') + `
+        <div class="test-box">
+          <div class="stat-row"><strong>Demo Inbox Total:</strong> ${inbox.length} emails</div>
+          <div class="stat-row"><strong>Meteors Created:</strong> ${clustered.meteors.length}</div>
+          <div class="stat-row"><strong>Red Junk Emails:</strong> ${clustered.stats.totalRedEmails}</div>
+          <div class="stat-row"><strong>Yellow Unsure Emails:</strong> ${clustered.stats.totalYellowEmails}</div>
+          <div class="stat-row"><strong>Green Protected Emails:</strong> ${clustered.stats.totalGreenEmails}</div>
+          <div class="stat-row"><strong>Boss Senders Identified:</strong> ${clustered.bossSenders.map(b => b.senderName + ' (' + b.count + ')').join(', ')}</div>
+        </div>
+      `;
+    })();
+  </script>
+</body>
+</html>
